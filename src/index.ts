@@ -29,31 +29,32 @@ const corsHeaders = {
 	'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-// デフォルトモデル（新推奨モデルに更新）
-const DEFAULT_MODEL = '@cf/black-forest-labs/flux-2-klein-9b';
+// デフォルトモデル - 実際に利用可能なモデル（2026-11-24版）
+const DEFAULT_MODELS = [
+	'@cf/black-forest-labs/flux-2-klein-9b',  // 推奨：9B・画像編集対応
+	'@cf/black-forest-labs/flux-2-dev',       // 高精細・マルチリファレンス対応
+	'@cf/black-forest-labs/flux-1-schnell',   // 高速・12B
+	'@cf/black-forest-labs/flux-2-klein-4b',  // 超高速・画像編集対応
+	'@cf/leonardo/phoenix-1.0',                // テキスト描画・プロンプト追従性重視
+];
 
 // サポートされているモデル一覧
-const SUPPORTED_MODELS = [
-	'@cf/black-forest-labs/flux-2-klein-9b',      // 新推奨：高品質
-	'@cf/black-forest-labs/flux-1-schnell',       // 高速生成
-	'@cf/bytedance/stable-diffusion-xl-lightning', // 高速・低品質
-	'@cf/stabilityai/stable-diffusion-xl-base-1.0', // SDXL Base
-];
+const SUPPORTED_MODELS = DEFAULT_MODELS;
 
 // 廃止予定のモデル一覧
 const DEPRECATED_MODELS: Record<string, string> = {
-	'@cf/bytedance/stable-diffusion-xl-lightning': 'Still supported but consider migration to FLUX.2 Klein',
+	'@cf/bytedance/stable-diffusion-xl-lightning': 'Deprecated as of 2026-11-20',
+	'@cf/stabilityai/stable-diffusion-xl-base-1.0': 'Replaced by FLUX models',
 };
 
 function validateModel(model: string | undefined): string {
-	if (!model) return DEFAULT_MODEL;
+	if (!model) return DEFAULT_MODELS[0];
 	
-	// 廃止モデルの場合は警告ログを出力（本来はログサービスに送信）
+	// 廃止モデルの場合は警告ログを出力
 	if (DEPRECATED_MODELS[model]) {
-		console.warn(`Deprecated model: ${model}. ${DEPRECATED_MODELS[model]}`);
+		console.warn(`Model status: ${model}. ${DEPRECATED_MODELS[model]}`);
 	}
 	
-	// 未サポートモデルでもCloudflareが対応していれば試行（カスタムモデル対応）
 	return model;
 }
 
@@ -92,7 +93,7 @@ export default {
 		}
 
 		// パラメータの検証と取得
-		const model = validateModel(body.model);
+		const requestedModel = validateModel(body.model);
 		const seed = body.seed !== undefined ? Math.floor(body.seed) : undefined;
 		const width = body.width ?? 512;
 		const height = body.height ?? 768;
@@ -105,60 +106,95 @@ export default {
 			);
 		}
 
-		try {
-			// Cloudflare Workers AI へのリクエスト
-			const inputs = {
-				prompt: body.prompt,
-				...(seed !== undefined && { seed }),
-				width,
-				height,
-			};
+		// モデル試行リスト: リクエストされたモデル優先、その後デフォルトモデルをフォールバック
+		const modelsToTry = [
+			requestedModel,
+			...DEFAULT_MODELS.filter((m) => m !== requestedModel),
+		];
 
-			const response = await env.AI.run(model, inputs);
+		let lastError: string | null = null;
+		let usedModel: string | null = null;
 
-			// レスポンスをバイナリとして返す
-			return new Response(response, {
-				headers: {
-					...corsHeaders,
-					'Content-Type': 'image/png',
-					'Cache-Control': 'no-store',
-					'X-Model-Used': model,
-				},
-			});
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			console.error('AI.run error:', errorMessage);
+		// モデルをループして試行
+		for (const model of modelsToTry) {
+			try {
+				console.log(`Attempting model: ${model}`);
 
-			// 特定のエラーを処理
-			if (errorMessage.includes('429')) {
-				return json(
-					{
-						error: 'Rate limited by Cloudflare AI',
-						details: 'Please retry after a delay',
+				// Cloudflare Workers AI へのリクエスト
+				const inputs = {
+					prompt: body.prompt,
+					...(seed !== undefined && { seed }),
+					width,
+					height,
+				};
+
+				const response = await env.AI.run(model, inputs);
+
+				// レスポンスをバイナリとして返す
+				return new Response(response, {
+					headers: {
+						...corsHeaders,
+						'Content-Type': 'image/png',
+						'Cache-Control': 'no-store',
+						'X-Model-Used': model,
+						'X-Original-Model': requestedModel,
 					},
-					429,
-				);
-			}
+				});
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				console.error(`Model ${model} failed: ${errorMessage}`);
+				lastError = errorMessage;
 
-			if (errorMessage.includes('Model not found')) {
-				return json(
-					{
-						error: 'Model not found',
-						model,
-						supportedModels: SUPPORTED_MODELS,
-					},
-					400,
-				);
-			}
+				// 廃止されたモデルや利用不可のエラーの場合は次のモデルを試行
+				if (
+					errorMessage.includes('was deprecated') ||
+					errorMessage.includes('Model not found') ||
+					errorMessage.includes('not found') ||
+					errorMessage.includes('No such model') ||
+					errorMessage.includes('5006') ||
+					errorMessage.includes('5007') ||
+					errorMessage.includes('5028')
+				) {
+					continue;
+				}
 
-			return json(
-				{
-					error: 'Failed to generate image',
-					details: errorMessage,
-					model,
-				},
-				500,
-			);
+				// それ以外のエラーは即座に返す（レート制限、プロンプト制限など）
+				if (errorMessage.includes('429')) {
+					return json(
+						{
+							error: 'Rate limited by Cloudflare AI',
+							details: 'Please retry after a delay',
+						},
+						429,
+					);
+				}
+
+				// プロンプト関連のエラー
+				if (
+					errorMessage.includes('prompt') ||
+					errorMessage.includes('input') ||
+					errorMessage.includes('invalid')
+				) {
+					return json(
+						{
+							error: 'Invalid prompt or parameters',
+							details: errorMessage,
+						},
+						400,
+					);
+				}
+			}
 		}
+
+		// すべてのモデルが失敗した場合
+		return json(
+			{
+				error: 'Failed to generate image with all available models',
+				details: lastError || 'Unknown error',
+				requestedModel,
+				availableModels: SUPPORTED_MODELS,
+			},
+			503,
+		);
 	},
 } satisfies ExportedHandler<Env>;

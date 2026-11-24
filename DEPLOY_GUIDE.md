@@ -176,6 +176,60 @@ Cloudflare Dashboardでログを確認：
 2. エラーメッセージを確認
 3. Cloudflare AI の利用状況を確認
 
+## ログ設定（Observability）
+
+### Logs の設定
+
+Cloudflare Workers Observability を使用して、Worker の動作ログを取得できます。
+
+#### wrangler.toml での設定
+
+以下を `wrangler.toml` に追加します：
+
+```toml
+[observability.logs]
+enabled = false
+invocation_logs = true
+```
+
+#### 設定の説明
+
+| 設定項目 | 値 | 説明 |
+|---------|-----|------|
+| `enabled` | `false` | Logs ストレージを無効化（無料プランの場合） |
+| `invocation_logs` | `true` | リクエスト・レスポンス・メタデータは記録（トラブルシューティングに便利） |
+
+#### ログの確認
+
+```bash
+# リアルタイムログの表示
+wrangler tail
+
+# 見やすいフォーマットで表示
+wrangler tail --format pretty
+
+# フィルター付きで表示
+wrangler tail --status error
+```
+
+#### 推奨設定
+
+**無料・低コスト運用の場合：**
+```toml
+[observability.logs]
+enabled = false
+invocation_logs = true
+```
+
+**本番環境で詳細なログが必要な場合：**
+```toml
+[observability.logs]
+enabled = true
+invocation_logs = true
+```
+
+> **注意：** `enabled = true` にするとCloudflare Logs の有償機能を使用します。
+
 ## セキュリティのベストプラクティス
 
 ### 1. レート制限
