@@ -1,0 +1,23 @@
+node_modules/
+*.log
+.env*
+.wrangler/
+dist/
+build/
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# Optional npm cache directory
+.npm
+
+# Output of 'npm pack'
+*.tgz
+
+# Cloudflare specific
+.wrangler/
+wrangler-output/

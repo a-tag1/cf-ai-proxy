@@ -1,0 +1,33 @@
+{
+  "name": "cf-ai-proxy",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers AI Image Generation Proxy - Supports dynamic model selection and generation parameters",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "wrangler build",
+    "types": "wrangler types",
+    "test": "vitest",
+    "lint": "eslint src --max-warnings 0"
+  },
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "ai",
+    "image-generation",
+    "flux"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20231121.0",
+    "@types/node": "^20.10.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0",
+    "wrangler": "^3.26.0"
+  },
+  "dependencies": {}
+}
